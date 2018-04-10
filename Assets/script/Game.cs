@@ -3,8 +3,16 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
 
-public class Game : MonoBehaviour {
+using ActionManagement;
+using PAD_Module;
+using PAD_View;
+
+public class Game : ActionManager {
     Controllor _controllor;
+
+    // 船和乘客对象
+    Passenger[] _passenger;
+    Boat _boat;
 
     // 按钮的style
     GUIStyle backgroundStyle;
@@ -12,8 +20,6 @@ public class Game : MonoBehaviour {
 
     // Use this for initialization
     void Start() {
-        _controllor = new Controllor();
-
         // "gameove"和"成功"的提示框
         backgroundStyle = new GUIStyle("box");
         backgroundStyle.alignment = TextAnchor.LowerCenter;
@@ -21,11 +27,26 @@ public class Game : MonoBehaviour {
         // 标题
         boxStyle = new GUIStyle("Box");
         boxStyle.fontSize = 20;
+        // 初始化对象
+        _passenger = new Passenger[6];
+        for (int i = 0; i != 3; ++i) {
+            _passenger[i] = new Passenger(Passenger.Type.Priest);
+        }
+        for (int i = 3; i != 6; ++i) {
+            _passenger[i] = new Passenger(Passenger.Type.Devil);
+        }
+        _boat = new Boat();
+        new Coast(View.leftCoastPos);
+        new Coast(View.rightCoastPos);
+        new River(View.riverPos);
+        new Mountain(View.Mountain);
+
+        _controllor = new Controllor(_passenger, _boat, this);
     }
 
     private float clickWaiting = 0;
     // Update is called once per frame
-    void Update() {
+    protected new void Update() {
         if (Input.GetMouseButton(0) && clickWaiting >= 0.2) {
             clickWaiting = 0;
             Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
@@ -37,11 +58,11 @@ public class Game : MonoBehaviour {
             }
         }
         clickWaiting += Time.deltaTime;
-        _controllor.setView();
+        base.Update();
     }
 
     void OnGUI() {
-        switch (_controllor.getState()) {
+        switch (_controllor.state) {
             case Controllor.GameState.gameover:
                 GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "游戏失败", backgroundStyle);
                 break;
@@ -60,14 +81,6 @@ public class Game : MonoBehaviour {
 
     // =================================================================================================
     // controllor
-    // 表示对象在左岸或右岸
-    public enum CoastPos {
-        CoastLeft,
-        CoastRight,
-        BoatLeft,
-        BoatRight
-    }
-
     public class Controllor {
         public enum GameState {
             waiting,
@@ -75,109 +88,109 @@ public class Game : MonoBehaviour {
             win,
             gameover
         }
-        Passenger[] _passanger;
+        public GameState state;
+
+        Passenger[] _passenger;
         Boat _boat;
-        private GameState _state;
 
-        public GameState getState() {
-            return _state;
-        }
+        ActionManager _actionManager;
 
-        public Controllor() {
-            // 初始化对象
-            _passanger = new Passenger[6];
-            for (int i = 0; i != 3; ++i) {
-                _passanger[i] = new Passenger(Passenger.Type.Priest);
-            }
-            for (int i = 3; i != 6; ++i) {
-                _passanger[i] = new Passenger(Passenger.Type.Devil);
-            }
-            _boat = new Boat();
-            new Coast(View.leftCoastPos);
-            new Coast(View.rightCoastPos);
-            new River(View.riverPos);
-            _state = GameState.waiting;
-            setView();
+        public Controllor(Passenger[] _p, Boat _b, ActionManager am) {
+            _passenger = _p;
+            _boat = _b;
+            _actionManager = am;
+            state = GameState.waiting;
+            reinitial();
         }
 
         public void reinitial() {
             for(int i=0; i != 6; ++i) {
-                _passanger[i].CoastPos = CoastPos.CoastRight;
+                _passenger[i].CoastPos = CoastPos.CoastRight;
             }
             _boat.CoastPos = CoastPos.BoatRight;
-            _state = GameState.waiting;
+            state = GameState.waiting;
+            View.StaticRender(_passenger, _boat);
         }
 
         public void clickObject(string name) { // 点击
-            if(_state != GameState.waiting) {
+            if(state != GameState.waiting) {
                 return;
             } else if(Regex.IsMatch(name, "^passenge")) {
                 int index = int.Parse(name.Substring(name.Length - 1));
-                CoastPos pPos = _passanger[index].CoastPos;
+                CoastPos pPos = _passenger[index].CoastPos;
                 CoastPos bPos = _boat.CoastPos;
 
                 int onBoat = countOnBoat();
 
                 if(onBoat < 2 && pPos == CoastPos.CoastLeft && bPos == CoastPos.BoatLeft) {
-                    _passanger[index].CoastPos = bPos; // 上船
+                    _passenger[index].CoastPos = bPos; // 上船
+                    aboard(index);
                 } else if(onBoat < 2 && pPos == CoastPos.CoastRight && bPos == CoastPos.BoatRight) {
-                    _passanger[index].CoastPos = bPos; // 上船
+                    _passenger[index].CoastPos = bPos; // 上船
+                    aboard(index);
                 } else if(pPos == CoastPos.BoatLeft) {
-                    _passanger[index].CoastPos = CoastPos.CoastLeft; // 下船
-                } else if(pPos == CoastPos.BoatRight) { 
-                    _passanger[index].CoastPos = CoastPos.CoastRight; // 下船
+                    _passenger[index].CoastPos = CoastPos.CoastLeft; // 下船
+                    ashore(index);
+                } else if (pPos == CoastPos.BoatRight) { 
+                    _passenger[index].CoastPos = CoastPos.CoastRight; // 下船
+                    ashore(index);
                 }
             } else if (Regex.IsMatch(name, "^Boat$")) {
-                if(countOnBoat() == 0) {
-                    return;
-                }
-                if (_boat.CoastPos == CoastPos.BoatLeft) { // 从左岸过河
-                    _boat.CoastPos = CoastPos.BoatRight;
-                    for(int i=0; i!=6; ++i) {
-                        if(_passanger[i].CoastPos == CoastPos.BoatLeft) {
-                            _passanger[i].CoastPos = CoastPos.BoatRight;
+                if(countOnBoat() != 0) {
+                    if (_boat.CoastPos == CoastPos.BoatLeft) { // 从左岸过河
+                        _boat.CoastPos = CoastPos.BoatRight;
+                        for (int i = 0; i != 6; ++i) {
+                            if (_passenger[i].CoastPos == CoastPos.BoatLeft) {
+                                _passenger[i].CoastPos = CoastPos.BoatRight;
+                            }
+                        }
+                    } else { // 从右岸过河
+                        _boat.CoastPos = CoastPos.BoatLeft;
+                        for (int i = 0; i != 6; ++i) {
+                            if (_passenger[i].CoastPos == CoastPos.BoatRight) {
+                                _passenger[i].CoastPos = CoastPos.BoatLeft;
+                            }
                         }
                     }
-                } else { // 从右岸过河
-                    _boat.CoastPos = CoastPos.BoatLeft;
-                    for (int i = 0; i != 6; ++i) {
-                        if (_passanger[i].CoastPos == CoastPos.BoatRight) {
-                            _passanger[i].CoastPos = CoastPos.BoatLeft;
-                        }
-                    }
+                    state = GameState.moving;
+                    Action cross = View.Action_BoatCross.getAction(_passenger, _boat, 1, Finish.getInstance(this));
+                    _actionManager.RunAction(cross);
                 }
-                _state = GameState.moving;
             }
         }
-        public void setView() {
-            // 当渲染完过河的动画后才把_state设置为可以继续的waiting状态，并进入游戏结算的环节
-            if(View.render(_passanger, _boat, _state == GameState.moving)) {
-                _state = GameState.waiting;
-                checkState();
-            }
+        private void aboard(int index) {
+            state = GameState.moving;
+            Action ac = View.Action_Aboard.getAction(index, _passenger, _boat, Finish.getInstance(this));
+            _actionManager.RunAction(ac);
+        }
+        private void ashore(int index) {
+            state = GameState.moving;
+            Action ac = View.Action_Ashore.getAction(index, _passenger, _boat, Finish.getInstance(this));
+            _actionManager.RunAction(ac);
         }
         private int countOnBoat() {
             int count = 0;
             for(int i=0; i!=6; ++i) {
-                if(_passanger[i].CoastPos == CoastPos.BoatLeft 
-                    || _passanger[i].CoastPos == CoastPos.BoatRight) {
+                if(_passenger[i].CoastPos == CoastPos.BoatLeft 
+                    || _passenger[i].CoastPos == CoastPos.BoatRight) {
                     ++count;
                 }
             }
             return count;
         }
+        // 检查游戏是否结束
         private void checkState() {
             int leftDevil = 0, leftPriest = 0;
             int rightDevil = 0, rightPriest = 0;
             for(int i=0; i != 6; ++i) {
-                if(_passanger[i].type == Passenger.Type.Devil) {
-                    if(_passanger[i].CoastPos == CoastPos.BoatLeft || _passanger[i].CoastPos == CoastPos.CoastLeft) {
+                if(_passenger[i].type == Passenger.Type.Devil) {
+                    if(_passenger[i].CoastPos == CoastPos.BoatLeft || _passenger[i].CoastPos == CoastPos.CoastLeft) {
                         ++leftDevil;
                     } else {
                         ++rightDevil;
                     }
                 } else {
-                    if (_passanger[i].CoastPos == CoastPos.BoatLeft || _passanger[i].CoastPos == CoastPos.CoastLeft) {
+                    if (_passenger[i].CoastPos == CoastPos.BoatLeft || _passenger[i].CoastPos == CoastPos.CoastLeft) {
                         ++leftPriest;
                     } else {
                         ++rightPriest;
@@ -186,163 +199,27 @@ public class Game : MonoBehaviour {
             }
             if((leftDevil > leftPriest && leftPriest != 0) 
                 || (rightDevil > rightPriest && rightPriest != 0)) {
-                _state = GameState.gameover;
+                state = GameState.gameover;
             } else if(leftDevil == 3 && leftPriest == 3) {
-                _state = GameState.win;
+                state = GameState.win;
             }
         }
-    }
 
-    // ================================================================================================
-    // View 部分
-    public class View {
-        static public Vector3 leftCoastPos = new Vector3(23, 1.5f, 10);
-        static public Vector3 rightCoastPos = new Vector3(-23, 1.5f, 10);
-        static public Vector3 riverPos = new Vector3(0, 0.5f, 10);
-
-        // 当render函数渲染完moving的过程后，将会返回一个true，表示游戏可以重新返回waiting的状态
-        static public bool render(Passenger[] _passanger, Boat _boat, bool isMoving) {
-            if(isMoving) {
-                return moving(_passanger, _boat);
-            } else {
-                standing(_passanger, _boat);
-                return true;
-            }
-        }
-        static private Vector3 boatLeft = new Vector3(-5.5f, 1.25f, 0);
-        static private Vector3 boatRight = new Vector3(5.5f, 1.25f, 0);
-        static private Vector3 passengerLeft(int onBoat) {
-            return new Vector3(-(6.5f - 2 * onBoat++), 2, 0);
-        }
-        static private Vector3 passengerRight(int onBoat) {
-            return new Vector3((4.5f + 2 * onBoat++), 2, 0);
-        }
-
-        static private float time = 0;
-        // 过河后返回true, 另外开始执行函数后，_boat的位置已经到达对岸
-        static private bool moving(Passenger[] _passanger, Boat _boat) {
-            Vector3 boatFrom = _boat.CoastPos == CoastPos.BoatLeft ? boatRight : boatLeft;
-            Vector3 boatTo = _boat.CoastPos == CoastPos.BoatLeft ? boatLeft : boatRight;
-            int during = 1; // 过河动画时间
-            if(time * Time.deltaTime < during) {
-                // 船
-                _boat.setPostion(boatFrom + time * Time.deltaTime / during * (boatTo - boatFrom));
-                // 乘客
-                int onBoat = 0;
-                for (int i = 0; i != 6; ++i) {
-                    if(_passanger[i].CoastPos != CoastPos.BoatLeft && _passanger[i].CoastPos != CoastPos.BoatRight) {
-                        continue;
-                    }
-                    Vector3 pFrom = _boat.CoastPos == CoastPos.BoatLeft ? passengerRight(onBoat) : passengerLeft(onBoat);
-                    Vector3 pTo = _boat.CoastPos == CoastPos.BoatLeft ? passengerLeft(onBoat) : passengerRight(onBoat);
-                    _passanger[i].setPosition(pFrom + time * Time.deltaTime / during * (pTo - pFrom));
-                    ++onBoat;
+        // 动作的回调函数
+        private class Finish : Callback {
+            private static Controllor _controllor;
+            private static Finish _instance;
+            public static Finish getInstance(Controllor _c) {
+                if(_instance == null) {
+                    _controllor = _c;
+                    _instance = new Finish();
                 }
-                ++time;
-                return false;
-            } else {
-                _boat.setPostion(boatTo);
-                time = 0;
-                return true;
+                return _instance;
             }
-        }
-        // view类不检查是否有多于2个对象在船上，请保证传入数据时船上的乘客不大于两个
-        static private void standing(Passenger[] _passanger, Boat _boat) {
-            int onBoat = 0;
-            int onLeftPriest = 0;
-            int onLeftDevil = 0;
-            int onRightPriest = 0;
-            int onRightDevil = 0;
-            // 乘客
-            for (int i=0; i!=6; ++i) {
-                switch(_passanger[i].CoastPos) {
-                    case CoastPos.BoatLeft:
-                        _passanger[i].setPosition(new Vector3(-(6.5f - 2 * onBoat++), 2, 0));
-                        break;
-                    case CoastPos.BoatRight:
-                        _passanger[i].setPosition(new Vector3((4.5f + 2 * onBoat++), 2, 0));
-                        break;
-                    case CoastPos.CoastLeft: {
-                        int x = _passanger[i].type == Passenger.Type.Devil 
-                            ? -(10 + 2 * onLeftDevil++) 
-                            : -(10 + 2 * onLeftPriest++);
-                        int z = _passanger[i].type == Passenger.Type.Devil
-                            ? 1
-                            : -1;
-                        _passanger[i].setPosition(new Vector3(x, 3.5f, z));
-                        break;
-                    }
-                    case CoastPos.CoastRight: {
-                        int x = _passanger[i].type == Passenger.Type.Devil
-                            ? (10 + 2 * onRightDevil++)
-                            : (10 + 2 * onRightPriest++);
-                        int z = _passanger[i].type == Passenger.Type.Devil
-                            ? 1
-                            : -1;
-                        _passanger[i].setPosition(new Vector3(x, 3.5f, z));
-                        break;
-                    }
-                }
+            public void call() {
+                _controllor.state = GameState.waiting;
+                _controllor.checkState();
             }
-            // 船
-            if(_boat.CoastPos == CoastPos.BoatLeft) {
-                _boat.setPostion(boatLeft);
-            } else {
-                _boat.setPostion(boatRight);
-            }
-        }
-    }
-
-    // ================================================================================================
-    // Module部分
-    public class Boat {
-        public CoastPos CoastPos = CoastPos.BoatRight;
-        private GameObject _boat;
-        public Boat() {
-            _boat = GameObject.Instantiate(Resources.Load("Prefabs/Boat", typeof(GameObject))) as GameObject;
-            _boat.name = "Boat";
-        }
-
-        public void setPostion(Vector3 position) {
-            _boat.transform.position = position;
-        }
-    }
-    
-    public class Passenger {
-        public enum Type {
-            Priest,
-            Devil
-        }
-        public Type type;
-        public CoastPos CoastPos = CoastPos.CoastRight;
-        static private int count = 0;
-        GameObject _passenger;
-        public Passenger(Type _type) {
-            type = _type;
-            if(type == Type.Devil) {
-                _passenger = GameObject.Instantiate(Resources.Load("Prefabs/Devil", typeof(GameObject))) as GameObject;
-            } else {
-                _passenger = GameObject.Instantiate(Resources.Load("Prefabs/Priest", typeof(GameObject))) as GameObject;
-            }
-            _passenger.name = "passenger" + count.ToString();
-            ++count;
-        }
-
-        public void setPosition(Vector3 pos) {
-            _passenger.transform.position = pos;
-        }
-    }
-
-    public class Coast {
-        public Coast(Vector3 pos) {
-            GameObject.Instantiate(Resources.Load("Prefabs/Coast", typeof(GameObject)), pos, Quaternion.identity);
-        }
-    }
-
-    public class River {
-        public River(Vector3 pos) {
-            GameObject.Instantiate(Resources.Load("Prefabs/River", typeof(GameObject)), pos, Quaternion.identity);
         }
     }
 }
-
